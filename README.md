@@ -1,6 +1,14 @@
 # HA Device Tracker
 
-This application tracks device locations from Home Assistant using the Home Assistant API.
+HA Device Tracker é um aplicativo full-stack que rastreia e exibe as localizações de dispositivos do Home Assistant em um mapa interativo. A aplicação consiste em um backend Node.js que se comunica com a API do Home Assistant e um frontend React com um mapa Leaflet para visualização das localizações.
+
+## Funcionalidades
+
+- Rastreamento em tempo real de dispositivos Home Assistant
+- Visualização interativa em mapa Leaflet
+- Interface de configurações para ajustar parâmetros de rastreamento
+- Atualização automática das localizações
+- Sistema de build e execução com Nix para configuração de desenvolvimento consistente
 
 ## Setup Instructions
 
@@ -130,3 +138,30 @@ npm run dev
 - `POST /api/tracking/start` - Start tracking device location
 - `POST /api/tracking/stop` - Stop tracking device location
 - `GET /api/location` - Get last known location
+
+## Arquitetura do Projeto
+
+### Backend (`/backend`)
+- Servidor Node.js com Express
+- Comunicação com a API do Home Assistant
+- Gerenciamento de configurações via variáveis de ambiente
+- Endpoint para obter localização do dispositivo
+
+### Frontend (`/frontend`)
+- Aplicação React com Vite
+- Componente Map.jsx para exibição do mapa Leaflet
+- Componente Settings.jsx para configurações
+- Comunicação com backend via API HTTP
+
+### Nix Configuration
+- Configurações para ambiente de desenvolvimento consistente
+- Gerenciamento de dependências para backend e frontend
+- Scripts de execução para desenvolvimento e produção
+
+## Contribuindo
+
+1. Faça um fork do projeto
+2. Crie uma branch para sua feature (`git checkout -b feature/nova-feature`)
+3. Commit suas mudanças (`git commit -m 'Adiciona nova feature'`)
+4. Push para a branch (`git push origin feature/nova-feature`)
+5. Abra um Pull Request
