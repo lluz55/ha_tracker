@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, forwardRef } from 'react';
-import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, useMap, Polyline } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 
@@ -53,7 +53,7 @@ function ChangeView({ lat, lng, isTracking }) {
   return null;
 }
 
-const Map = forwardRef(({ latitude, longitude, isTracking, isMobile }, ref) => {
+const Map = forwardRef(({ latitude, longitude, isTracking, isMobile, selectedHistory, playbackIndex }, ref) => {
   const internalMapRef = useRef();
 
   // Forward the internal ref to the parent
@@ -71,29 +71,89 @@ const Map = forwardRef(({ latitude, longitude, isTracking, isMobile }, ref) => {
     markerIcon = idleIcon;
   }
 
+  // Filter locations based on playbackIndex
+  const visibleLocations = selectedHistory && selectedHistory.locations && playbackIndex >= 0
+    ? selectedHistory.locations.slice(0, playbackIndex + 1)
+    : (selectedHistory?.locations || []);
+
+  const playbackPoint = selectedHistory && selectedHistory.locations && playbackIndex >= 0
+    ? selectedHistory.locations[playbackIndex]
+    : null;
+
   return (
     <MapContainer
       center={position}
       zoom={isTracking ? 15 : 13}
       style={{ height: '100%', width: '100%' }}
       ref={internalMapRef}
-      whenCreated={(map) => {
-        // For dark theme, we just keep the default OpenStreetMap tiles
-        // but we could add a dark tile provider if needed
-      }}
     >
       <TileLayer
         attribution='&copy; <a href="http://osm.org/copyright">OpenStreetMap</a> contributors'
         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-        // For dark theme: url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
       />
-      <ChangeView lat={latitude} lng={longitude} isTracking={isTracking} />
-      {(latitude !== 0 && longitude !== 0) && (
+      <ChangeView 
+        lat={playbackPoint ? playbackPoint.latitude : latitude} 
+        lng={playbackPoint ? playbackPoint.longitude : longitude} 
+        isTracking={isTracking || !!playbackPoint} 
+      />
+      
+      {/* Display tracking history as lines if available */}
+      {visibleLocations.length > 0 && (
+        <Polyline
+          positions={visibleLocations.map(loc => [loc.latitude, loc.longitude])}
+          color="#bb86fc"
+          weight={4}
+          opacity={0.8}
+        />
+      )}
+      
+      {/* Display a specific marker for the playback point */}
+      {playbackPoint && (
+        <Marker position={[playbackPoint.latitude, playbackPoint.longitude]} icon={trackingIcon}>
+          <Popup>
+            {isTracking ? 'Current Position' : 'Playback Point'}: <br />
+            Time: {new Date(playbackPoint.timestamp).toLocaleString()} <br />
+            Point: {playbackIndex + 1} of {selectedHistory.locations.length}
+          </Popup>
+        </Marker>
+      )}
+
+      {/* Show live marker if it's different from playback point or we're just tracking */}
+      {isTracking && latitude !== 0 && longitude !== 0 && (!playbackPoint || (Math.abs(playbackPoint.latitude - latitude) > 0.00001 || Math.abs(playbackPoint.longitude - longitude) > 0.00001)) && (
+        <Marker position={position} icon={trackingIcon}>
+          <Popup>
+            Live Position (latest): <br />
+            Latitude: {Number(latitude).toFixed(6)}, Longitude: {Number(longitude).toFixed(6)}
+          </Popup>
+        </Marker>
+      )}
+
+      {/* Show other points as smaller markers if not too many */}
+      {visibleLocations.length > 0 && visibleLocations.length < 100 && visibleLocations.map((loc, index) => (
+        index !== playbackIndex && (
+          <Marker 
+            key={index} 
+            position={[loc.latitude, loc.longitude]} 
+            icon={new L.DivIcon({
+              className: 'custom-div-icon',
+              html: `<div style="background-color: #bb86fc; width: 8px; height: 8px; border-radius: 50%; border: 1px solid white;"></div>`,
+              iconSize: [8, 8],
+              iconAnchor: [4, 4]
+            })}
+          >
+            <Popup>
+              Point {index + 1} <br />
+              Time: {new Date(loc.timestamp).toLocaleString()}
+            </Popup>
+          </Marker>
+        )
+      ))}
+      
+      {(!isTracking && !selectedHistory && latitude !== 0 && longitude !== 0) && (
         <Marker position={position} icon={markerIcon}>
           <Popup>
-            Device Location: <br />
-            Latitude: {Number(latitude).toFixed(6)}, Longitude: {Number(longitude).toFixed(6)} <br />
-            Status: {isTracking ? 'Tracking Active' : 'Location Stored'}
+            Last Known Location: <br />
+            Latitude: {Number(latitude).toFixed(6)}, Longitude: {Number(longitude).toFixed(6)}
           </Popup>
         </Marker>
       )}

@@ -12,6 +12,15 @@
       let
         pkgs = nixpkgs.legacyPackages.${system};
         nodejs_pkgs = nodejs.legacyPackages.${system};
+
+        backendNodejsPackage = nodejs_pkgs.buildNpmPackage {
+          pname = "ha-tracker-backend-deps";
+          version = "0.1.0";
+          src = ./backend;
+          npmDepsHash = "sha256-pb2JuWstmVGT/yQTHd5V569qviNeRxuGOKu8r1felIg="; # Updated with actual hash
+          dontNpmBuild = true;
+          dontPatchShebangs = true;
+        };
       in
       {
         devShells.default = pkgs.mkShell {
@@ -20,12 +29,14 @@
             nodejs_pkgs.nodePackages.npm
             nodejs_pkgs.nodePackages.yarn
             pkgs.git
+            backendNodejsPackage
           ];
           shellHook = ''
             echo "Entering development shell for HA Device Tracker"
             echo "Node.js (v20) and npm/yarn are available."
             echo "Run 'cd frontend && npm install' if needed to install frontend dependencies"
             echo "Run 'cd frontend && npm run dev' to start the frontend development server"
+            export NODE_PATH="${backendNodejsPackage}/lib/node_modules:$NODE_PATH"
           '';
         };
 
@@ -33,12 +44,9 @@
           type = "app";
           program = "${pkgs.writeScript "run-backend" ''
             #!${pkgs.bash}/bin/bash
-            export HA_URL="''${HA_URL:-}"
-            export HA_TOKEN="''${HA_TOKEN:-}"
-            export HA_DEVICE_ID="''${HA_DEVICE_ID:-}"
             export PORT="''${BACKEND_PORT:-3001}"
-            cd ${./backend}
-            exec ${nodejs_pkgs.nodejs_20}/bin/node server.js
+            export NODE_PATH="${backendNodejsPackage}/lib/node_modules:$NODE_PATH"
+            exec ${nodejs_pkgs.nodejs_20}/bin/node ${./backend}/server.js
           ''}";
         };
 
@@ -56,7 +64,14 @@
 
             # Copy frontend to temp workspace
             cp -r ${./frontend}/. "$TEMP_WORKSPACE/"
+            # Copy .env from root if it exists
+            if [ -f .env ]; then
+              cp .env "$TEMP_WORKSPACE/"
+            elif [ -f ../.env ]; then
+              cp ../.env "$TEMP_WORKSPACE/"
+            fi
             cd "$TEMP_WORKSPACE"
+            chmod -R u+w .
 
             # Install dependencies to make sure vite and other dev dependencies are available
             ${nodejs_pkgs.nodejs_20}/bin/npm install
@@ -72,12 +87,11 @@
             #!${pkgs.bash}/bin/bash
             # Start backend in background
             echo "Starting backend..."
-            export HA_URL="''${HA_URL:-}"
-            export HA_TOKEN="''${HA_TOKEN:-}"
-            export HA_DEVICE_ID="''${HA_DEVICE_ID:-}"
             export PORT="''${BACKEND_PORT:-3001}"
-            cd ${./backend}
-            exec ${nodejs_pkgs.nodejs_20}/bin/node server.js &
+            export NODE_PATH="${backendNodejsPackage}/lib/node_modules:$NODE_PATH"
+
+            # Run backend (it will look for .env in current directory, which is root)
+            ${nodejs_pkgs.nodejs_20}/bin/node ${./backend}/server.js &
             BACKEND_PID=$!
 
             # Give backend a moment to start
@@ -97,7 +111,14 @@
 
             # Copy frontend to temp workspace
             cp -r ${./frontend}/. "$TEMP_WORKSPACE/"
+            # Copy .env from root if it exists
+            if [ -f .env ]; then
+              cp .env "$TEMP_WORKSPACE/"
+            elif [ -f ../.env ]; then
+              cp ../.env "$TEMP_WORKSPACE/"
+            fi
             cd "$TEMP_WORKSPACE"
+            chmod -R u+w .
 
             # Install dependencies to make sure vite and other dev dependencies are available
             ${nodejs_pkgs.nodejs_20}/bin/npm install

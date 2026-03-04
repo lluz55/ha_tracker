@@ -19,6 +19,10 @@ let settings = {
 let trackingIntervalId = null;
 let lastKnownLocation = null; // New variable to store the last known location
 
+// Structure to store tracking histories
+let trackingHistories = [];
+let currentTrackingSession = null; // To keep track of the current active tracking session
+
 const getDeviceLocation = async () => {
     if (!settings.haUrl || !settings.haToken || !settings.haDeviceId) {
         console.log('Home Assistant settings are not configured.');
@@ -55,6 +59,17 @@ const getDeviceLocation = async () => {
             const { latitude, longitude } = attributes;
             console.log(`Device location: ${latitude}, ${longitude}`);
             lastKnownLocation = { latitude, longitude }; // Store the last known location
+            
+            // Add to current tracking session if active
+            if (currentTrackingSession) {
+                const locationEntry = {
+                    latitude,
+                    longitude,
+                    timestamp: new Date().toISOString()
+                };
+                
+                currentTrackingSession.locations.push(locationEntry);
+            }
         } else {
             console.error('Latitude or longitude not found in Home Assistant response attributes.');
             console.error('Response data:', JSON.stringify(response.data, null, 2));
@@ -96,23 +111,72 @@ app.post('/api/tracking/start', (req, res) => {
     if (trackingIntervalId) {
         return res.status(400).json({ message: 'Tracking is already active.' });
     }
+    
+    // Create a new tracking session
+    currentTrackingSession = {
+        id: Date.now(), // Using timestamp as unique ID
+        startTime: new Date().toISOString(),
+        locations: []
+    };
+    
     console.log('Starting tracking...');
     getDeviceLocation(); // Fetch immediately
     trackingIntervalId = setInterval(getDeviceLocation, settings.trackingInterval * 1000);
-    res.json({ message: 'Tracking started.' });
+    res.json({ message: 'Tracking started.', sessionId: currentTrackingSession.id });
 });
 
 app.post('/api/tracking/stop', (req, res) => {
     if (!trackingIntervalId) {
         return res.status(400).json({ message: 'Tracking is not active.' });
     }
+    
     clearInterval(trackingIntervalId);
     trackingIntervalId = null;
+    
+    // Finalize current tracking session if exists
+    if (currentTrackingSession) {
+        currentTrackingSession.endTime = new Date().toISOString();
+        
+        // Add the completed session to the history
+        trackingHistories.unshift(currentTrackingSession); // Add to beginning of array
+        
+        // Clear current session
+        currentTrackingSession = null;
+    }
+    
     res.json({ message: 'Tracking stopped.' });
 });
 
 app.get('/api/location', (req, res) => {
     res.json(lastKnownLocation); // Return the last known location
+});
+
+// Get tracking histories
+app.get('/api/tracking/histories', (req, res) => {
+    res.json(trackingHistories);
+});
+
+// Get a specific tracking history by ID
+app.get('/api/tracking/history/:id', (req, res) => {
+    const id = parseInt(req.params.id);
+    const history = trackingHistories.find(h => h.id === id);
+    
+    if (!history) {
+        return res.status(404).json({ message: 'Tracking history not found.' });
+    }
+    
+    res.json(history);
+});
+
+// Get current tracking session
+app.get('/api/tracking/current', (req, res) => {
+    res.json(currentTrackingSession);
+});
+
+// Delete all tracking histories
+app.delete('/api/tracking/histories', (req, res) => {
+    trackingHistories = []; // Clear all histories
+    res.json({ message: 'All tracking histories cleared.' });
 });
 
 // Health check endpoint

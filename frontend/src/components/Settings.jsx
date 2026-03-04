@@ -143,6 +143,50 @@ function Settings({ settings, onSave, isMobile }) {
           Save Settings
         </button>
       </form>
+      
+      {/* Tracking History Controls */}
+      <div style={{
+        marginTop: '20px',
+        paddingTop: '15px',
+        borderTop: '1px solid #444',
+        color: '#e0e0e0'
+      }}>
+        <h3 style={{ color: '#bb86fc', fontSize: '1rem', marginBottom: '15px' }}>Tracking History</h3>
+        <button
+          onClick={() => {
+            if (window.confirm('Are you sure you want to clear all tracking history? This cannot be undone.')) {
+              fetch('/api/tracking/histories', {
+                method: 'DELETE'
+              })
+              .then(response => {
+                if (response.ok) {
+                  alert('Tracking history cleared successfully');
+                  window.location.reload(); // Simple way to refresh the UI
+                } else {
+                  alert('Error clearing tracking history');
+                }
+              })
+              .catch(error => {
+                console.error('Error clearing tracking history:', error);
+                alert('Error clearing tracking history');
+              });
+            }
+          }}
+          style={{
+            backgroundColor: '#d32f2f',
+            color: 'white',
+            border: 'none',
+            padding: '10px 15px',
+            borderRadius: '6px',
+            cursor: 'pointer',
+            fontSize: '0.9rem',
+            fontWeight: 'bold',
+            width: '100%'
+          }}
+        >
+          Clear All History
+        </button>
+      </div>
     </div>
   );
 }

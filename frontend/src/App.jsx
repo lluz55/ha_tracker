@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import Map from './components/Map';
 import Settings from './components/Settings';
+import Timeline from './components/Timeline';
 
 function App() {
   const [location, setLocation] = useState(null);
@@ -10,6 +11,9 @@ function App() {
   const [connectionStatus, setConnectionStatus] = useState('disconnected'); // disconnected, connected, error
   const [locationFetchError, setLocationFetchError] = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [trackingHistories, setTrackingHistories] = useState([]);
+  const [selectedHistory, setSelectedHistory] = useState(null);
+  const [playbackIndex, setPlaybackIndex] = useState(-1);
 
   const [haSettings, setHaSettings] = useState({
     haUrl: '',
@@ -17,6 +21,20 @@ function App() {
     haDeviceId: '',
     trackingInterval: 15,
   });
+
+  const handlePointChange = (index) => {
+    setPlaybackIndex(index);
+  };
+
+  const handleHistorySelect = (history) => {
+    if (selectedHistory?.id === history.id) {
+      setSelectedHistory(null);
+      setPlaybackIndex(-1);
+    } else {
+      setSelectedHistory(history);
+      setPlaybackIndex(history.locations?.length - 1 || 0);
+    }
+  };
 
   useEffect(() => {
     // Fetch initial settings from backend
@@ -28,6 +46,15 @@ function App() {
       .catch(error => {
         console.error('Error fetching settings:', error);
         setConnectionStatus('error');
+      });
+      
+    // Load tracking histories
+    axios.get('/api/tracking/histories')
+      .then(response => {
+        setTrackingHistories(response.data);
+      })
+      .catch(error => {
+        console.error('Error fetching tracking histories:', error);
       });
   }, []);
 
@@ -52,6 +79,9 @@ function App() {
           console.log('Tracking stopped:', response.data.message);
           setIsTrackingActive(false);
           setConnectionStatus('connected'); // Confirm we're still connected to backend
+          
+          // Refresh tracking histories
+          refreshTrackingHistories();
         })
         .catch(error => {
           console.error('Error stopping tracking:', error);
@@ -65,12 +95,27 @@ function App() {
           console.log('Tracking started:', response.data.message);
           setIsTrackingActive(true);
           setConnectionStatus('connected'); // Confirm we're still connected to backend
+          
+          // Clear selected history when starting new tracking
+          setSelectedHistory(null);
+          setPlaybackIndex(-1);
         })
         .catch(error => {
           console.error('Error starting tracking:', error);
           setConnectionStatus('error');
         });
     }
+  };
+
+  // Refresh tracking histories after tracking stops
+  const refreshTrackingHistories = () => {
+    axios.get('/api/tracking/histories')
+      .then(response => {
+        setTrackingHistories(response.data);
+      })
+      .catch(error => {
+        console.error('Error fetching tracking histories:', error);
+      });
   };
 
   // Fetch actual location data periodically
@@ -101,7 +146,6 @@ function App() {
 
     // Start fetching location every 5 seconds (or a configurable interval)
     locationFetchIntervalId = setInterval(fetchLocation, 5000); // Fetch every 5 seconds
-
     // Fetch once immediately
     fetchLocation();
 
@@ -109,6 +153,44 @@ function App() {
       clearInterval(locationFetchIntervalId);
     };
   }, []);
+
+  // Refresh current tracking history periodically when tracking is active
+  useEffect(() => {
+    let historyFetchIntervalId;
+
+    if (isTrackingActive) {
+      const fetchCurrentTrackingHistory = () => {
+        axios.get('/api/tracking/current')
+          .then(response => {
+            if (response.data && response.data.locations) {
+              // Create a temporary history object for the current tracking session
+              const currentTrackingAsHistory = {
+                ...response.data,
+                locations: response.data.locations
+              };
+              // Update selected history to show current tracking path in real-time
+              setSelectedHistory(currentTrackingAsHistory);
+              // When tracking is active, always show the latest point
+              setPlaybackIndex(response.data.locations.length - 1);
+            }
+          })
+          .catch(error => {
+            console.error('Error fetching current tracking history:', error);
+          });
+      };
+
+      // Fetch current tracking history every 10 seconds when tracking is active
+      historyFetchIntervalId = setInterval(fetchCurrentTrackingHistory, 10000);
+      fetchCurrentTrackingHistory(); // Fetch immediately
+    }
+
+    return () => {
+      if (historyFetchIntervalId) {
+        clearInterval(historyFetchIntervalId);
+      }
+    };
+  }, [isTrackingActive]);
+
 
 
   // Determine status indicator color
@@ -177,6 +259,8 @@ function App() {
           longitude={location?.longitude || (haSettings.haUrl ? 0 : -0.09)}
           isTracking={isTrackingActive}
           isMobile={isMobile}
+          selectedHistory={selectedHistory}
+          playbackIndex={playbackIndex}
         />
       </div>
 
@@ -254,7 +338,15 @@ function App() {
             <Settings settings={haSettings} onSave={handleSaveSettings} isMobile={isMobile} />
           </div>
 
-          {/* Location Info */}
+          {/* Location Info and Timeline */}
+          {selectedHistory && !isTrackingActive && (
+            <Timeline
+              history={selectedHistory}
+              onPointChange={handlePointChange}
+              isMobile={isMobile}
+            />
+          )}
+
           {location && (
             <div style={{
               marginTop: '20px',
@@ -269,6 +361,48 @@ function App() {
               {lastUpdated && (
                 <p style={{ margin: '8px 0 0 0', fontSize: '0.8rem', color: '#aaa' }}><small>Last updated: {lastUpdated.toLocaleTimeString()}</small></p>
               )}
+              
+              {/* Tracking History Section */}
+              <div style={{
+                marginTop: '20px',
+                padding: '12px',
+                backgroundColor: '#2d2d2d',
+                borderRadius: '6px',
+                border: '1px solid #444'
+              }}>
+                <h3 style={{ margin: '0 0 10px 0', fontSize: '1rem', color: '#bb86fc' }}>Tracking History</h3>
+                
+                {trackingHistories.length > 0 ? (
+                  <div style={{ maxHeight: '200px', overflowY: 'auto' }}>
+                    {trackingHistories.map((history, index) => (
+                      <div
+                        key={history.id}
+                        onClick={() => handleHistorySelect(history)}
+                        style={{
+                          padding: '8px',
+                          margin: '4px 0',
+                          backgroundColor: selectedHistory?.id === history.id ? '#3a3a3a' : '#222',
+                          border: '1px solid #555',
+                          borderRadius: '4px',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        <div style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>
+                          {new Date(history.startTime).toLocaleString()}
+                        </div>
+                        <div style={{ fontSize: '0.8rem', color: '#aaa' }}>
+                          Locations: {history.locations?.length || 0} |
+                          Duration: {history.endTime ?
+                            `${Math.round((new Date(history.endTime) - new Date(history.startTime))/60000)} min` :
+                            'Active'}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p style={{ margin: '10px 0 0 0', fontSize: '0.9rem', color: '#aaa' }}>No tracking history yet</p>
+                )}
+              </div>
             </div>
           )}
 
