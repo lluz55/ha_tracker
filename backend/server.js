@@ -2,130 +2,162 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
+const { Sequelize, DataTypes } = require('sequelize');
+const path = require('path');
 
 const app = express();
 const port = process.env.PORT || 3001;
 
-app.use(cors());
-app.use(express.json());
+// Database Setup
+const sequelize = new Sequelize({
+    dialect: 'sqlite',
+    storage: path.join(process.cwd(), 'database.sqlite'),
+    logging: false
+});
 
-let settings = {
+// Models
+const Settings = sequelize.define('Settings', {
+    haUrl: { type: DataTypes.STRING, defaultValue: '' },
+    haToken: { type: DataTypes.TEXT, defaultValue: '' },
+    haDeviceId: { type: DataTypes.STRING, defaultValue: '' },
+    trackingInterval: { type: DataTypes.INTEGER, defaultValue: 15 }
+});
+
+const TrackingSession = sequelize.define('TrackingSession', {
+    startTime: { type: DataTypes.DATE, defaultValue: DataTypes.NOW },
+    endTime: { type: DataTypes.DATE, allowNull: true }
+});
+
+const Location = sequelize.define('Location', {
+    latitude: { type: DataTypes.FLOAT, allowNull: false },
+    longitude: { type: DataTypes.FLOAT, allowNull: false },
+    timestamp: { type: DataTypes.DATE, defaultValue: DataTypes.NOW }
+});
+
+// Associations
+TrackingSession.hasMany(Location, { as: 'locations', onDelete: 'CASCADE' });
+Location.belongsTo(TrackingSession);
+
+// Initialize DB
+let currentSettings = {
     haUrl: process.env.HA_URL || '',
     haToken: process.env.HA_TOKEN || '',
     haDeviceId: process.env.HA_DEVICE_ID || '',
-    trackingInterval: 15, // in seconds
+    trackingInterval: 15
 };
 
-let trackingIntervalId = null;
-let lastKnownLocation = null; // New variable to store the last known location
+const initDb = async () => {
+    try {
+        await sequelize.sync();
+        console.log('Database synced');
+        
+        // Load settings from DB or create default
+        let settingsRow = await Settings.findOne();
+        if (!settingsRow) {
+            settingsRow = await Settings.create(currentSettings);
+        }
+        currentSettings = settingsRow.toJSON();
+    } catch (error) {
+        console.error('Failed to sync database:', error);
+    }
+};
 
-// Structure to store tracking histories
-let trackingHistories = [];
-let currentTrackingSession = null; // To keep track of the current active tracking session
+initDb();
+
+app.use(cors());
+app.use(express.json());
+
+let trackingIntervalId = null;
+let lastKnownLocation = null;
+let currentTrackingSession = null;
 
 const getDeviceLocation = async () => {
-    if (!settings.haUrl || !settings.haToken || !settings.haDeviceId) {
+    if (!currentSettings.haUrl || !currentSettings.haToken || !currentSettings.haDeviceId) {
         console.log('Home Assistant settings are not configured.');
         return;
     }
 
     try {
-        // Ensure the URL ends with a slash if needed
-        let baseUrl = settings.haUrl;
-        if (!baseUrl.endsWith('/')) {
-            baseUrl += '/';
-        }
+        let baseUrl = currentSettings.haUrl;
+        if (!baseUrl.endsWith('/')) baseUrl += '/';
 
-        // Validate the entity ID format (should be domain.entity_id)
-        if (!settings.haDeviceId.includes('.')) {
-            console.error('Invalid device ID format. Expected format: domain.entity_name (e.g. device_tracker.my_device, person.user_name)');
+        if (!currentSettings.haDeviceId.includes('.')) {
+            console.error('Invalid device ID format.');
             return;
         }
 
-        const apiUrl = `${baseUrl}api/states/${settings.haDeviceId}`;
-        console.log(`Fetching from Home Assistant API: ${apiUrl}`);
+        const apiUrl = `${baseUrl}api/states/${currentSettings.haDeviceId}`;
+        console.log(`Fetching from HA API: ${apiUrl}`);
 
         const response = await axios.get(apiUrl, {
             headers: {
-                'Authorization': `Bearer ${settings.haToken}`,
+                'Authorization': `Bearer ${currentSettings.haToken}`,
                 'Content-Type': 'application/json',
             },
         });
 
-        console.log('Response from Home Assistant:', response.data);
         const { attributes } = response.data;
 
         if (response.status === 200 && attributes && attributes.latitude !== undefined && attributes.longitude !== undefined) {
             const { latitude, longitude } = attributes;
             console.log(`Device location: ${latitude}, ${longitude}`);
-            lastKnownLocation = { latitude, longitude }; // Store the last known location
+            lastKnownLocation = { latitude, longitude };
             
-            // Add to current tracking session if active
             if (currentTrackingSession) {
-                const locationEntry = {
+                await Location.create({
                     latitude,
                     longitude,
-                    timestamp: new Date().toISOString()
-                };
-                
-                currentTrackingSession.locations.push(locationEntry);
+                    timestamp: new Date(),
+                    TrackingSessionId: currentTrackingSession.id
+                });
             }
         } else {
-            console.error('Latitude or longitude not found in Home Assistant response attributes.');
-            console.error('Response data:', JSON.stringify(response.data, null, 2));
-            lastKnownLocation = null; // Clear last known location if not found
+            console.error('Location attributes not found.');
+            lastKnownLocation = null;
         }
     } catch (error) {
-        console.error('Error fetching device location:', error.message);
-        if (error.response) {
-            console.error('HTTP Status:', error.response.status);
-            console.error('Error response data:', error.response.data);
-            console.error('Error response headers:', error.response.headers);
-
-            // If we got a 404, it could be due to incorrect entity ID, incorrect URL format, or invalid token
-            if (error.response.status === 404) {
-                console.error('404 Error: Check that the entity ID exists and is in the correct format (e.g. device_tracker.my_device, person.user_name, sensor.my_location)');
-            } else if (error.response.status === 401) {
-                console.error('401 Error: Unauthorized - check your Home Assistant token');
-            }
-        } else if (error.request) {
-            // Request was made but no response received
-            console.error('No response received from Home Assistant:', error.request);
-        }
-        // Clear last known location if there's an error
+        console.error('Error fetching location:', error.message);
         lastKnownLocation = null;
     }
 };
 
-
 app.get('/api/settings', (req, res) => {
-    res.json(settings);
+    res.json(currentSettings);
 });
 
-app.post('/api/settings', (req, res) => {
-    settings = { ...settings, ...req.body };
-    res.json(settings);
+app.post('/api/settings', async (req, res) => {
+    try {
+        let settingsRow = await Settings.findOne();
+        if (settingsRow) {
+            await settingsRow.update(req.body);
+        } else {
+            settingsRow = await Settings.create(req.body);
+        }
+        currentSettings = settingsRow.toJSON();
+        res.json(currentSettings);
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
 });
 
-app.post('/api/tracking/start', (req, res) => {
+app.post('/api/tracking/start', async (req, res) => {
     if (trackingIntervalId) {
         return res.status(400).json({ message: 'Tracking is already active.' });
     }
     
-    // Create a new tracking session
-    currentTrackingSession = {
-        id: Date.now(), // Using timestamp as unique ID
-        startTime: new Date().toISOString(),
-        locations: []
-    };
-    
-    console.log('Starting tracking...');
-    getDeviceLocation(); // Fetch immediately
-    trackingIntervalId = setInterval(getDeviceLocation, settings.trackingInterval * 1000);
-    res.json({ message: 'Tracking started.', sessionId: currentTrackingSession.id });
+    try {
+        currentTrackingSession = await TrackingSession.create({ startTime: new Date() });
+        console.log('Starting tracking session:', currentTrackingSession.id);
+        
+        await getDeviceLocation();
+        trackingIntervalId = setInterval(getDeviceLocation, currentSettings.trackingInterval * 1000);
+        res.json({ message: 'Tracking started.', sessionId: currentTrackingSession.id });
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
 });
 
-app.post('/api/tracking/stop', (req, res) => {
+app.post('/api/tracking/stop', async (req, res) => {
     if (!trackingIntervalId) {
         return res.status(400).json({ message: 'Tracking is not active.' });
     }
@@ -133,14 +165,8 @@ app.post('/api/tracking/stop', (req, res) => {
     clearInterval(trackingIntervalId);
     trackingIntervalId = null;
     
-    // Finalize current tracking session if exists
     if (currentTrackingSession) {
-        currentTrackingSession.endTime = new Date().toISOString();
-        
-        // Add the completed session to the history
-        trackingHistories.unshift(currentTrackingSession); // Add to beginning of array
-        
-        // Clear current session
+        await currentTrackingSession.update({ endTime: new Date() });
         currentTrackingSession = null;
     }
     
@@ -148,42 +174,57 @@ app.post('/api/tracking/stop', (req, res) => {
 });
 
 app.get('/api/location', (req, res) => {
-    res.json(lastKnownLocation); // Return the last known location
+    res.json(lastKnownLocation);
 });
 
-// Get tracking histories
-app.get('/api/tracking/histories', (req, res) => {
-    res.json(trackingHistories);
-});
-
-// Get a specific tracking history by ID
-app.get('/api/tracking/history/:id', (req, res) => {
-    const id = parseInt(req.params.id);
-    const history = trackingHistories.find(h => h.id === id);
-    
-    if (!history) {
-        return res.status(404).json({ message: 'Tracking history not found.' });
+app.get('/api/tracking/histories', async (req, res) => {
+    try {
+        const histories = await TrackingSession.findAll({
+            include: [{ model: Location, as: 'locations' }],
+            order: [['startTime', 'DESC']]
+        });
+        res.json(histories);
+    } catch (error) {
+        res.status(500).json({ message: error.message });
     }
-    
-    res.json(history);
 });
 
-// Get current tracking session
-app.get('/api/tracking/current', (req, res) => {
-    res.json(currentTrackingSession);
+app.get('/api/tracking/history/:id', async (req, res) => {
+    try {
+        const history = await TrackingSession.findByPk(req.params.id, {
+            include: [{ model: Location, as: 'locations' }]
+        });
+        if (!history) return res.status(404).json({ message: 'Not found' });
+        res.json(history);
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
 });
 
-// Delete all tracking histories
-app.delete('/api/tracking/histories', (req, res) => {
-    trackingHistories = []; // Clear all histories
-    res.json({ message: 'All tracking histories cleared.' });
+app.get('/api/tracking/current', async (req, res) => {
+    if (!currentTrackingSession) return res.json(null);
+    try {
+        const session = await TrackingSession.findByPk(currentTrackingSession.id, {
+            include: [{ model: Location, as: 'locations' }]
+        });
+        res.json(session);
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
 });
 
-// Health check endpoint
+app.delete('/api/tracking/histories', async (req, res) => {
+    try {
+        await TrackingSession.destroy({ where: {}, truncate: false });
+        res.json({ message: 'All tracking histories cleared.' });
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+});
+
 app.get('/', (req, res) => {
     res.json({ status: 'Server is running', timestamp: new Date().toISOString() });
 });
-
 
 app.listen(port, () => {
     console.log(`Backend server listening at http://localhost:${port}`);

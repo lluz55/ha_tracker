@@ -20,6 +20,10 @@
           npmDepsHash = "sha256-pb2JuWstmVGT/yQTHd5V569qviNeRxuGOKu8r1felIg="; # Updated with actual hash
           dontNpmBuild = true;
           dontPatchShebangs = true;
+          prePatch = ''
+            # Disable patchShebangs function to keep #!/usr/bin/env node
+            patchShebangs() { :; }
+          '';
         };
       in
       {
