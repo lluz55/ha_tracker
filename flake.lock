@@ -37,10 +37,7 @@
     "root": {
       "inputs": {
         "flake-utils": "flake-utils",
-        "nixpkgs": "nixpkgs",
-        "nodejs": [
-          "nixpkgs"
-        ]
+        "nixpkgs": "nixpkgs"
       }
     },
     "systems": {
