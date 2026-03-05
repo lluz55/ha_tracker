@@ -1,10 +1,14 @@
 import React, { useState, useEffect, useRef } from 'react';
-import axios from 'axios';
+import api from './api';
 import Map from './components/Map';
 import Settings from './components/Settings';
 import Timeline from './components/Timeline';
+import Auth from './components/Auth';
 
 function App() {
+  const [user, setUser] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
+
   const [location, setLocation] = useState(null);
   const [lastUpdated, setLastUpdated] = useState(null);
   const [isTrackingActive, setIsTrackingActive] = useState(false);
@@ -37,8 +41,27 @@ function App() {
   };
 
   useEffect(() => {
+    const checkAuth = async () => {
+      const token = localStorage.getItem('ha_tracker_token');
+      if (token) {
+        try {
+          const res = await api.get('/auth/me');
+          setUser(res.data.user);
+        } catch (err) {
+          localStorage.removeItem('ha_tracker_token');
+          setUser(null);
+        }
+      }
+      setAuthLoading(false);
+    };
+    checkAuth();
+  }, []);
+
+  useEffect(() => {
+    if (!user) return; // Only fetch data if logged in
+
     // Fetch initial settings from backend
-    axios.get('/api/settings')
+    api.get('/api/settings')
       .then(response => {
         setHaSettings(response.data);
         setConnectionStatus('connected'); // Update status to connected when settings are successfully fetched
@@ -49,17 +72,38 @@ function App() {
       });
       
     // Load tracking histories
-    axios.get('/api/tracking/histories')
+    api.get('/api/tracking/histories')
       .then(response => {
         setTrackingHistories(response.data);
       })
       .catch(error => {
         console.error('Error fetching tracking histories:', error);
       });
-  }, []);
+
+    // Check if there's an ongoing tracking session
+    api.get('/api/tracking/current')
+      .then(response => {
+        if (response.data && response.data.id) {
+          console.log('Detected active tracking session on load:', response.data.id);
+          setIsTrackingActive(true);
+        }
+      })
+      .catch(error => {
+        console.error('Error checking current tracking status:', error);
+      });
+  }, [user]);
+
+  const handleLogout = () => {
+    localStorage.removeItem('ha_tracker_token');
+    setUser(null);
+    setIsTrackingActive(false);
+    setLocation(null);
+    setTrackingHistories([]);
+    setSelectedHistory(null);
+  };
 
   const handleSaveSettings = (newSettings) => {
-    axios.post('/api/settings', newSettings)
+    api.post('/api/settings', newSettings)
       .then(response => {
         setHaSettings(response.data);
         setConnectionStatus('connected'); // Confirm connection is good when saving settings
@@ -74,7 +118,7 @@ function App() {
     if (isTrackingActive) {
       // Stop tracking
       console.log('Sending request to stop tracking...');
-      axios.post('/api/tracking/stop')
+      api.post('/api/tracking/stop')
         .then(response => {
           console.log('Tracking stopped:', response.data.message);
           setIsTrackingActive(false);
@@ -90,7 +134,7 @@ function App() {
     } else {
       // Start tracking
       console.log('Sending request to start tracking...');
-      axios.post('/api/tracking/start')
+      api.post('/api/tracking/start')
         .then(response => {
           console.log('Tracking started:', response.data.message);
           setIsTrackingActive(true);
@@ -109,7 +153,7 @@ function App() {
 
   // Refresh tracking histories after tracking stops
   const refreshTrackingHistories = () => {
-    axios.get('/api/tracking/histories')
+    api.get('/api/tracking/histories')
       .then(response => {
         setTrackingHistories(response.data);
       })
@@ -123,7 +167,8 @@ function App() {
     let locationFetchIntervalId;
 
     const fetchLocation = () => {
-      axios.get('/api/location')
+      if (!user) return;
+      api.get('/api/location')
         .then(response => {
           if (response.data && response.data.latitude && response.data.longitude) {
             setLocation(response.data);
@@ -145,22 +190,24 @@ function App() {
     };
 
     // Start fetching location every 5 seconds (or a configurable interval)
-    locationFetchIntervalId = setInterval(fetchLocation, 5000); // Fetch every 5 seconds
-    // Fetch once immediately
-    fetchLocation();
+    if (user) {
+      locationFetchIntervalId = setInterval(fetchLocation, 5000); // Fetch every 5 seconds
+      // Fetch once immediately
+      fetchLocation();
+    }
 
     return () => {
-      clearInterval(locationFetchIntervalId);
+      if (locationFetchIntervalId) clearInterval(locationFetchIntervalId);
     };
-  }, []);
+  }, [user]);
 
   // Refresh current tracking history periodically when tracking is active
   useEffect(() => {
     let historyFetchIntervalId;
 
-    if (isTrackingActive) {
+    if (isTrackingActive && user) {
       const fetchCurrentTrackingHistory = () => {
-        axios.get('/api/tracking/current')
+        api.get('/api/tracking/current')
           .then(response => {
             if (response.data && response.data.locations) {
               // Create a temporary history object for the current tracking session
@@ -189,7 +236,7 @@ function App() {
         clearInterval(historyFetchIntervalId);
       }
     };
-  }, [isTrackingActive]);
+  }, [isTrackingActive, user]);
 
 
 
@@ -233,25 +280,31 @@ function App() {
     }
   }, [sidebarOpen, isMobile]);
 
+  if (authLoading) {
+    return <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', backgroundColor: '#121212', color: '#e0e0e0' }}>Loading...</div>;
+  }
+
+  if (!user) {
+    return <Auth onLogin={setUser} />;
+  }
+
   return (
     <div style={{
       display: 'flex',
       height: '100vh',
-      backgroundColor: '#121212',
-      color: '#e0e0e0',
-      flexDirection: isMobile ? (sidebarOpen ? 'column' : 'row') : 'row',
-      position: 'relative'
+      backgroundColor: '#0F172A',
+      color: '#F8FAFC',
+      flexDirection: 'row',
+      position: 'relative',
+      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
+      overflow: 'hidden'
     }}>
       {/* Main Map Area */}
       <div style={{
         flex: 1,
-        position: 'relative',
-        backgroundColor: '#1a1a1a',
-        marginLeft: isMobile ? '0' : '10px',
-        marginTop: isMobile ? '0' : '10px',
-        marginRight: isMobile ? sidebarOpen && !isMobile ? '360px' : '0' : '10px', // Add margin when sidebar is open on desktop
-        marginBottom: isMobile ? '0' : '10px',
-        ...(isMobile && sidebarOpen ? { display: 'none' } : {})
+        position: 'absolute',
+        top: 0, left: 0, right: 0, bottom: 0,
+        zIndex: 1
       }}>
         <Map
           ref={mapRef}
@@ -264,143 +317,209 @@ function App() {
         />
       </div>
 
-      {/* Hamburger Menu - Show on all devices, now on the right */}
+      {/* Hamburger Menu (Floating) */}
       <button
         onClick={() => setSidebarOpen(!sidebarOpen)}
         style={{
           position: 'absolute',
-          top: '15px',
-          right: isMobile ? '15px' : '15px',
-          left: 'auto',
+          top: '20px',
+          right: '20px',
           zIndex: 1001,
-          backgroundColor: 'transparent',
-          border: 'none',
-          color: '#e0e0e0',
-          fontSize: isMobile ? '1.5rem' : '1.2rem',
+          backgroundColor: '#1E293B',
+          border: '1px solid #334155',
+          color: '#F8FAFC',
+          borderRadius: '12px',
           cursor: 'pointer',
-          padding: '5px',
-          width: isMobile ? '40px' : '35px',
-          height: isMobile ? '40px' : '35px',
+          width: '48px',
+          height: '48px',
           display: 'flex',
           alignItems: 'center',
-          justifyContent: 'center'
+          justifyContent: 'center',
+          boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.3)',
+          transition: 'all 0.2s'
         }}
+        onMouseOver={(e) => e.currentTarget.style.backgroundColor = '#334155'}
+        onMouseOut={(e) => e.currentTarget.style.backgroundColor = '#1E293B'}
       >
-        ☰
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          {sidebarOpen ? (
+            <><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></>
+          ) : (
+            <><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></>
+          )}
+        </svg>
       </button>
 
-      {/* Sidebar - Settings and Controls on the right */}
-      {sidebarOpen && (
-        <div style={{
-          width: isMobile ? '100%' : '350px',
-          padding: '20px',
-          borderLeft: isMobile ? 'none' : '1px solid #333', // Changed from borderRight to borderLeft
-          backgroundColor: '#1e1e1e',
-          color: '#e0e0e0',
-          display: 'flex',
-          flexDirection: 'column',
-          height: isMobile ? 'calc(100% - 100px)' : 'calc(100% - 20px)',  // Adjust height for desktop considering the spacing
-          minHeight: isMobile ? '40vh' : '100%',
-          overflowY: 'auto',
-          zIndex: 999,
-          position: isMobile ? 'absolute' : 'relative',
-          top: isMobile ? '0' : '10px',
-          right: isMobile ? '0' : '10px', // Changed from left to right
-          bottom: isMobile ? '0' : '10px',
-          marginLeft: isMobile ? '0' : '10px' // Changed from marginRight to marginLeft
-        }}>
-          <h1 style={{ fontSize: '1.5rem', marginBottom: '20px', color: '#bb86fc' }}>HA Device Tracker</h1>
-
-          {/* Connection Status */}
-          <div style={{ display: 'flex', alignItems: 'center', marginBottom: '15px' }}>
-            <div
+      {/* Sidebar - Glassmorphism style */}
+      <div style={{
+        width: isMobile ? '100%' : '380px',
+        backgroundColor: 'rgba(15, 23, 42, 0.85)',
+        backdropFilter: 'blur(12px)',
+        WebkitBackdropFilter: 'blur(12px)',
+        borderLeft: '1px solid rgba(51, 65, 85, 0.5)',
+        display: 'flex',
+        flexDirection: 'column',
+        height: '100%',
+        zIndex: 999,
+        position: 'absolute',
+        top: 0,
+        right: 0,
+        bottom: 0,
+        transform: sidebarOpen ? 'translateX(0)' : 'translateX(100%)',
+        transition: 'transform 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+        boxShadow: '-10px 0 25px rgba(0,0,0,0.3)',
+        overflowY: 'auto'
+      }}>
+        
+        <div style={{ padding: '24px 24px 0 24px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <div style={{ 
+                width: '40px', height: '40px', backgroundColor: '#6366F1', 
+                borderRadius: '10px', display: 'flex', justifyContent: 'center', alignItems: 'center'
+              }}>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg>
+              </div>
+              <h1 style={{ fontSize: '1.4rem', margin: 0, fontWeight: 'bold' }}>Tracker</h1>
+            </div>
+            
+            <button
+              onClick={handleLogout}
               style={{
-                width: '12px',
-                height: '12px',
-                borderRadius: '50%',
-                backgroundColor: getStatusColor(),
-                marginRight: '8px'
+                backgroundColor: 'transparent',
+                color: '#94A3B8',
+                border: 'none',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                fontSize: '0.9rem',
+                transition: 'color 0.2s',
+                paddingRight: '40px' // Space for hamburger
               }}
-            />
-            <span style={{ fontSize: '0.9rem' }}>
+              onMouseOver={(e) => e.currentTarget.style.color = '#EF4444'}
+              onMouseOut={(e) => e.currentTarget.style.color = '#94A3B8'}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
+              Sair
+            </button>
+          </div>
+
+          {/* Connection Status Badge */}
+          <div style={{ 
+            display: 'inline-flex', 
+            alignItems: 'center', 
+            gap: '8px',
+            backgroundColor: 'rgba(30, 41, 59, 0.8)',
+            padding: '8px 12px',
+            borderRadius: '20px',
+            border: '1px solid rgba(51, 65, 85, 0.8)',
+            marginBottom: '24px'
+          }}>
+            <div style={{
+              width: '10px', height: '10px', borderRadius: '50%',
+              backgroundColor: getStatusColor(),
+              boxShadow: `0 0 8px ${getStatusColor()}`
+            }}/>
+            <span style={{ fontSize: '0.85rem', fontWeight: '500', color: '#CBD5E1' }}>
               {connectionStatus === 'connected'
-                ? isTrackingActive
-                  ? 'Tracking Active'
-                  : 'Connected'
-                : connectionStatus === 'error'
-                  ? 'Connection Error'
-                  : 'Disconnected'}
-              {isTrackingActive && location && ` - ${location.latitude.toFixed(4)}, ${location.longitude.toFixed(4)}`}
+                ? isTrackingActive ? 'Rastreamento Ativo' : 'Conectado'
+                : connectionStatus === 'error' ? 'Erro de Conexão' : 'Desconectado'}
             </span>
           </div>
+        </div>
 
-          <div style={{ flex: 1, overflowY: 'auto' }}>
-            <Settings settings={haSettings} onSave={handleSaveSettings} isMobile={isMobile} />
-          </div>
+        <div style={{ flex: 1, padding: '0 24px 24px 24px' }}>
+          <Settings settings={haSettings} onSave={handleSaveSettings} isMobile={isMobile} />
 
           {/* Location Info and Timeline */}
           {selectedHistory && !isTrackingActive && (
-            <Timeline
-              history={selectedHistory}
-              onPointChange={handlePointChange}
-              isMobile={isMobile}
-            />
+            <Timeline history={selectedHistory} onPointChange={handlePointChange} isMobile={isMobile} />
           )}
 
           {location && (
             <div style={{
               marginTop: '20px',
-              padding: '12px',
-              backgroundColor: '#2d2d2d',
-              borderRadius: '6px',
-              border: '1px solid #444'
+              padding: '16px',
+              backgroundColor: '#1E293B',
+              borderRadius: '12px',
+              border: '1px solid #334155'
             }}>
-              <h3 style={{ margin: '0 0 10px 0', fontSize: '1rem', color: '#bb86fc' }}>Current Location</h3>
-              <p style={{ margin: '5px 0' }}><strong>Latitude:</strong> {location.latitude.toFixed(6)}</p>
-              <p style={{ margin: '5px 0' }}><strong>Longitude:</strong> {location.longitude.toFixed(6)}</p>
+              <h3 style={{ margin: '0 0 12px 0', fontSize: '1.05rem', color: '#F8FAFC', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#6366F1" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"></circle><circle cx="12" cy="12" r="3"></circle></svg>
+                Localização Atual
+              </h3>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '12px' }}>
+                <div style={{ backgroundColor: '#0F172A', padding: '10px', borderRadius: '8px', border: '1px solid #334155' }}>
+                  <div style={{ fontSize: '0.75rem', color: '#94A3B8', marginBottom: '4px' }}>Latitude</div>
+                  <div style={{ fontFamily: 'monospace', color: '#F8FAFC' }}>{location.latitude.toFixed(5)}</div>
+                </div>
+                <div style={{ backgroundColor: '#0F172A', padding: '10px', borderRadius: '8px', border: '1px solid #334155' }}>
+                  <div style={{ fontSize: '0.75rem', color: '#94A3B8', marginBottom: '4px' }}>Longitude</div>
+                  <div style={{ fontFamily: 'monospace', color: '#F8FAFC' }}>{location.longitude.toFixed(5)}</div>
+                </div>
+              </div>
               {lastUpdated && (
-                <p style={{ margin: '8px 0 0 0', fontSize: '0.8rem', color: '#aaa' }}><small>Last updated: {lastUpdated.toLocaleTimeString()}</small></p>
+                <p style={{ margin: 0, fontSize: '0.8rem', color: '#64748B', textAlign: 'right' }}>
+                  Atualizado às {lastUpdated.toLocaleTimeString()}
+                </p>
               )}
               
               {/* Tracking History Section */}
-              <div style={{
-                marginTop: '20px',
-                padding: '12px',
-                backgroundColor: '#2d2d2d',
-                borderRadius: '6px',
-                border: '1px solid #444'
-              }}>
-                <h3 style={{ margin: '0 0 10px 0', fontSize: '1rem', color: '#bb86fc' }}>Tracking History</h3>
+              <div style={{ marginTop: '24px' }}>
+                <h3 style={{ margin: '0 0 12px 0', fontSize: '1.05rem', color: '#F8FAFC', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#6366F1" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="12 8 12 12 14 14"></polyline><circle cx="12" cy="12" r="10"></circle></svg>
+                  Histórico de Sessões
+                </h3>
                 
                 {trackingHistories.length > 0 ? (
-                  <div style={{ maxHeight: '200px', overflowY: 'auto' }}>
-                    {trackingHistories.map((history, index) => (
-                      <div
-                        key={history.id}
-                        onClick={() => handleHistorySelect(history)}
-                        style={{
-                          padding: '8px',
-                          margin: '4px 0',
-                          backgroundColor: selectedHistory?.id === history.id ? '#3a3a3a' : '#222',
-                          border: '1px solid #555',
-                          borderRadius: '4px',
-                          cursor: 'pointer'
-                        }}
-                      >
-                        <div style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>
-                          {new Date(history.startTime).toLocaleString()}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '250px', overflowY: 'auto', paddingRight: '4px' }}>
+                    {trackingHistories.map((history, index) => {
+                      const isSelected = selectedHistory?.id === history.id;
+                      return (
+                        <div
+                          key={history.id}
+                          onClick={() => handleHistorySelect(history)}
+                          style={{
+                            padding: '12px',
+                            backgroundColor: isSelected ? 'rgba(99, 102, 241, 0.15)' : '#0F172A',
+                            border: `1px solid ${isSelected ? '#6366F1' : '#334155'}`,
+                            borderRadius: '8px',
+                            cursor: 'pointer',
+                            transition: 'all 0.2s',
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center'
+                          }}
+                          onMouseOver={(e) => { if (!isSelected) e.currentTarget.style.borderColor = '#475569' }}
+                          onMouseOut={(e) => { if (!isSelected) e.currentTarget.style.borderColor = '#334155' }}
+                        >
+                          <div>
+                            <div style={{ fontWeight: '600', fontSize: '0.9rem', color: isSelected ? '#818CF8' : '#E2E8F0', marginBottom: '4px' }}>
+                              {new Date(history.startTime).toLocaleDateString()} às {new Date(history.startTime).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                            </div>
+                            <div style={{ fontSize: '0.8rem', color: '#94A3B8' }}>
+                              {history.locations?.length || 0} pontos registrados
+                            </div>
+                          </div>
+                          <div style={{ 
+                            fontSize: '0.75rem', 
+                            padding: '4px 8px', 
+                            backgroundColor: history.endTime ? '#1E293B' : 'rgba(16, 185, 129, 0.2)',
+                            color: history.endTime ? '#94A3B8' : '#10B981',
+                            borderRadius: '12px',
+                            fontWeight: '600'
+                          }}>
+                            {history.endTime ? `${Math.round((new Date(history.endTime) - new Date(history.startTime))/60000)} min` : 'Ativa'}
+                          </div>
                         </div>
-                        <div style={{ fontSize: '0.8rem', color: '#aaa' }}>
-                          Locations: {history.locations?.length || 0} |
-                          Duration: {history.endTime ?
-                            `${Math.round((new Date(history.endTime) - new Date(history.startTime))/60000)} min` :
-                            'Active'}
-                        </div>
-                      </div>
-                    ))}
+                      )
+                    })}
                   </div>
                 ) : (
-                  <p style={{ margin: '10px 0 0 0', fontSize: '0.9rem', color: '#aaa' }}>No tracking history yet</p>
+                  <div style={{ padding: '20px', textAlign: 'center', backgroundColor: '#0F172A', borderRadius: '8px', border: '1px dashed #334155' }}>
+                    <p style={{ margin: 0, fontSize: '0.9rem', color: '#64748B' }}>Nenhum histórico encontrado</p>
+                  </div>
                 )}
               </div>
             </div>
@@ -408,46 +527,63 @@ function App() {
 
           {locationFetchError && (
             <div style={{
-              marginTop: '15px',
-              padding: '12px',
-              backgroundColor: '#3e2020',
-              color: '#f44336',
-              borderRadius: '6px',
-              border: '1px solid #642e2e'
+              marginTop: '16px',
+              padding: '12px 16px',
+              backgroundColor: 'rgba(239, 68, 68, 0.1)',
+              color: '#F87171',
+              borderRadius: '8px',
+              border: '1px solid rgba(239, 68, 68, 0.3)',
+              fontSize: '0.9rem'
             }}>
-              <p><strong>Error:</strong> {locationFetchError}</p>
+              <strong>Erro:</strong> {locationFetchError}
             </div>
           )}
+          
+          {/* Spacer for bottom button */}
+          <div style={{ height: '100px' }}></div>
         </div>
-      )}
+      </div>
 
-      {/* Floating Tracking Button at Bottom */}
+      {/* Floating Tracking Button */}
       <div style={{
         position: 'absolute',
-        bottom: '20px',
-        left: '50%',
+        bottom: '30px',
+        left: sidebarOpen && !isMobile ? 'calc(50% - 190px)' : '50%',
         transform: 'translateX(-50%)',
-        zIndex: 1000
+        zIndex: 1000,
+        transition: 'left 0.3s cubic-bezier(0.4, 0, 0.2, 1)'
       }}>
         <button
           onClick={handleTrackingToggle}
           style={{
-            backgroundColor: isTrackingActive ? '#d32f2f' : '#4CAF50',
+            backgroundColor: isTrackingActive ? '#EF4444' : '#10B981', // Red 500 or Emerald 500
             color: 'white',
             border: 'none',
-            borderRadius: '50%',
-            width: isMobile ? '70px' : '80px',
-            height: isMobile ? '70px' : '80px',
-            fontSize: isMobile ? '14px' : '16px',
+            borderRadius: '30px',
+            padding: '0 32px',
+            height: '60px',
+            fontSize: '1rem',
             fontWeight: 'bold',
+            letterSpacing: '1px',
             cursor: 'pointer',
-            boxShadow: '0 4px 8px rgba(0,0,0,0.5)',
+            boxShadow: `0 10px 25px -5px ${isTrackingActive ? 'rgba(239, 68, 68, 0.5)' : 'rgba(16, 185, 129, 0.5)'}`,
             display: 'flex',
             alignItems: 'center',
-            justifyContent: 'center'
+            gap: '12px',
+            transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)'
+          }}
+          onMouseOver={(e) => {
+            e.currentTarget.style.transform = 'scale(1.05)';
+          }}
+          onMouseOut={(e) => {
+            e.currentTarget.style.transform = 'scale(1)';
           }}
         >
-          {isTrackingActive ? 'STOP' : 'START'}
+          {isTrackingActive ? (
+            <><svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect></svg> PARAR RASTREIO</>
+          ) : (
+            <><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg> INICIAR RASTREIO</>
+          )}
         </button>
       </div>
     </div>

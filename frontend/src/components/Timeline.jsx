@@ -1,99 +1,103 @@
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 
 function Timeline({ history, onPointChange, isMobile }) {
-  const [currentIndex, setCurrentIndex] = useState(0);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const locations = history?.locations || [];
+  if (!history || !history.locations || history.locations.length === 0) {
+    return null;
+  }
 
-  useEffect(() => {
-    // Reset to start when history changes
-    setCurrentIndex(0);
-    setIsPlaying(false);
-  }, [history]);
-
-  useEffect(() => {
-    let interval;
-    if (isPlaying && currentIndex < locations.length - 1) {
-      interval = setInterval(() => {
-        setCurrentIndex((prev) => {
-          const next = prev + 1;
-          onPointChange(next);
-          if (next >= locations.length - 1) {
-            setIsPlaying(false);
-            return prev;
-          }
-          return next;
-        });
-      }, 1000); // 1 second per point
-    } else {
-      setIsPlaying(false);
-    }
-    return () => clearInterval(interval);
-  }, [isPlaying, currentIndex, locations.length, onPointChange]);
-
-  if (locations.length === 0) return null;
-
-  const currentPoint = locations[currentIndex];
-  const timeStr = new Date(currentPoint.timestamp).toLocaleTimeString();
-
-  const handleSliderChange = (e) => {
-    const index = parseInt(e.target.value);
-    setCurrentIndex(index);
-    onPointChange(index);
-    setIsPlaying(false);
+  const formatTime = (isoString) => {
+    return new Date(isoString).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   };
 
   return (
     <div style={{
-      padding: '15px',
-      backgroundColor: '#252525',
-      borderRadius: '8px',
-      marginTop: '15px',
-      border: '1px solid #444',
-      color: '#e0e0e0'
+      marginTop: '20px',
+      padding: '20px',
+      backgroundColor: '#1E293B', // Slate 800
+      borderRadius: '12px',
+      border: '1px solid #334155', // Slate 700
+      display: 'flex',
+      flexDirection: 'column',
+      maxHeight: isMobile ? '30vh' : '40vh'
     }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-        <h4 style={{ margin: 0, color: '#bb86fc' }}>Session Timeline</h4>
-        <span style={{ fontSize: '0.85rem', color: '#aaa' }}>{timeStr}</span>
-      </div>
+      <h3 style={{ 
+        color: '#F8FAFC', 
+        fontSize: '1.1rem', 
+        margin: '0 0 16px 0', 
+        display: 'flex', 
+        alignItems: 'center', 
+        gap: '8px' 
+      }}>
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#6366F1" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+        Timeline da Sessão
+      </h3>
+      
+      <div style={{ 
+        overflowY: 'auto', 
+        flex: 1, 
+        paddingRight: '8px',
+        // Estilização customizada da scrollbar para navegadores webkit
+        scrollbarWidth: 'thin',
+        scrollbarColor: '#475569 transparent'
+      }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', position: 'relative' }}>
+          {/* Linha vertical conectando os pontos */}
+          <div style={{
+            position: 'absolute',
+            left: '11px',
+            top: '20px',
+            bottom: '20px',
+            width: '2px',
+            backgroundColor: '#334155',
+            zIndex: 0
+          }}></div>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
-        <button
-          onClick={() => setIsPlaying(!isPlaying)}
-          disabled={currentIndex >= locations.length - 1 && !isPlaying}
-          style={{
-            backgroundColor: isPlaying ? '#f44336' : '#6200ea',
-            color: 'white',
-            border: 'none',
-            borderRadius: '4px',
-            padding: '8px 12px',
-            cursor: 'pointer',
-            fontWeight: 'bold',
-            fontSize: '0.9rem',
-            minWidth: '70px'
-          }}
-        >
-          {isPlaying ? 'PAUSE' : 'PLAY'}
-        </button>
-
-        <input
-          type="range"
-          min="0"
-          max={locations.length - 1}
-          value={currentIndex}
-          onChange={handleSliderChange}
-          style={{
-            flex: 1,
-            cursor: 'pointer',
-            accentColor: '#bb86fc'
-          }}
-        />
-      </div>
-
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '8px', fontSize: '0.75rem', color: '#888' }}>
-        <span>Start: {new Date(locations[0].timestamp).toLocaleTimeString()}</span>
-        <span>Point {currentIndex + 1} of {locations.length}</span>
-        <span>End: {new Date(locations[locations.length - 1].timestamp).toLocaleTimeString()}</span>
+          {history.locations.map((loc, index) => (
+            <div 
+              key={loc.id || index}
+              onClick={() => onPointChange(index)}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '12px',
+                padding: '10px 12px',
+                backgroundColor: '#0F172A', // Slate 900
+                borderRadius: '8px',
+                cursor: 'pointer',
+                border: '1px solid #334155',
+                transition: 'all 0.2s',
+                position: 'relative',
+                zIndex: 1
+              }}
+              onMouseOver={(e) => {
+                e.currentTarget.style.borderColor = '#6366F1';
+                e.currentTarget.style.transform = 'translateX(4px)';
+              }}
+              onMouseOut={(e) => {
+                e.currentTarget.style.borderColor = '#334155';
+                e.currentTarget.style.transform = 'translateX(0)';
+              }}
+            >
+              {/* Ponto na timeline */}
+              <div style={{
+                width: '10px',
+                height: '10px',
+                borderRadius: '50%',
+                backgroundColor: index === history.locations.length - 1 ? '#10B981' : '#6366F1', // Verde para o último, Indigo para os outros
+                boxShadow: `0 0 0 4px #0F172A, 0 0 0 5px ${index === history.locations.length - 1 ? '#10B981' : '#6366F1'}`
+              }}></div>
+              
+              <div style={{ display: 'flex', flexDirection: 'column' }}>
+                <span style={{ color: '#F8FAFC', fontWeight: '600', fontSize: '0.95rem' }}>
+                  {formatTime(loc.timestamp)}
+                </span>
+                <span style={{ color: '#94A3B8', fontSize: '0.8rem', fontFamily: 'monospace' }}>
+                  {loc.latitude.toFixed(5)}, {loc.longitude.toFixed(5)}
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );

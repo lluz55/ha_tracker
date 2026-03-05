@@ -10,7 +10,7 @@ export default defineConfig(({ mode }) => {
     plugins: [react()],
     server: {
       proxy: {
-        '/api': {
+        '/hat': {
           target: `http://localhost:${env.BACKEND_PORT || '3001'}`,
           changeOrigin: true,
           secure: false,
