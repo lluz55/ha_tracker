@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"log"
@@ -65,7 +66,7 @@ var (
 	db             *gorm.DB
 	activeTrackers = make(map[uint]*TrackerState)
 	trackersMu     sync.RWMutex
-	jwtSecret      = []byte(getEnv("JWT_SECRET", "super_secret_jwt_key_ha_tracker"))
+	jwtSecret      []byte
 )
 
 // --- Utils ---
@@ -74,6 +75,90 @@ func getEnv(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func detectAppEnv() string {
+	if env, ok := os.LookupEnv("APP_ENV"); ok && strings.TrimSpace(env) != "" {
+		return strings.TrimSpace(env)
+	}
+	if env, ok := os.LookupEnv("ENVIRONMENT"); ok && strings.TrimSpace(env) != "" {
+		return strings.TrimSpace(env)
+	}
+	return "development"
+}
+
+func parseEnvLine(line string) (string, string, bool) {
+	trimmed := strings.TrimSpace(line)
+	if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+		return "", "", false
+	}
+
+	trimmed = strings.TrimPrefix(trimmed, "export ")
+	parts := strings.SplitN(trimmed, "=", 2)
+	if len(parts) != 2 {
+		return "", "", false
+	}
+
+	key := strings.TrimSpace(parts[0])
+	if key == "" {
+		return "", "", false
+	}
+
+	value := strings.TrimSpace(parts[1])
+	if len(value) >= 2 {
+		if (value[0] == '"' && value[len(value)-1] == '"') || (value[0] == '\'' && value[len(value)-1] == '\'') {
+			value = value[1 : len(value)-1]
+		}
+	}
+
+	return key, value, true
+}
+
+func loadEnvFile(path string) error {
+	file, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		key, value, ok := parseEnvLine(scanner.Text())
+		if !ok {
+			continue
+		}
+		if _, exists := os.LookupEnv(key); !exists {
+			_ = os.Setenv(key, value)
+		}
+	}
+
+	return scanner.Err()
+}
+
+func loadExampleEnvFiles(appEnv string) {
+	roots := []string{".", ".."}
+	files := []string{
+		".env.example",
+		fmt.Sprintf(".env.%s.example", appEnv),
+	}
+	loaded := map[string]struct{}{}
+
+	for _, root := range roots {
+		for _, file := range files {
+			path := filepath.Join(root, file)
+			if _, seen := loaded[path]; seen {
+				continue
+			}
+			if err := loadEnvFile(path); err == nil {
+				loaded[path] = struct{}{}
+				log.Printf("Loaded environment defaults from %s", path)
+			}
+		}
+	}
+}
+
+func registrationEnabled() bool {
+	return strings.EqualFold(strings.TrimSpace(getEnv("ALLOW_REGISTRATION", "false")), "true")
 }
 
 // --- Auth Middleware ---
@@ -214,6 +299,10 @@ func stopTrackingWorker(userID uint) {
 
 // --- Main ---
 func main() {
+	appEnv := detectAppEnv()
+	loadExampleEnvFiles(appEnv)
+	jwtSecret = []byte(getEnv("JWT_SECRET", "super_secret_jwt_key_ha_tracker"))
+
 	// Database
 	var err error
 	dbPath := filepath.Join(".", "database.sqlite")
@@ -239,7 +328,7 @@ func main() {
 	}
 
 	r := gin.Default()
-	
+
 	// Permissive CORS for development
 	r.Use(cors.New(cors.Config{
 		AllowOrigins:     []string{"*"},
@@ -254,8 +343,7 @@ func main() {
 	{
 		// Auth
 		hat.POST("/auth/register", func(c *gin.Context) {
-			allowRegistration := getEnv("ALLOW_REGISTRATION", "true")
-			if strings.ToLower(allowRegistration) == "false" {
+			if !registrationEnabled() {
 				c.JSON(http.StatusForbidden, gin.H{"message": "Registration of new admins is disabled."})
 				return
 			}
@@ -347,18 +435,18 @@ func main() {
 			api.POST("/settings", func(c *gin.Context) {
 				var settings Settings
 				userID := c.GetUint("userId")
-				
+
 				// Fetch current to ensure we update the right one
 				db.Where("user_id = ?", userID).First(&settings)
-				
+
 				if err := c.ShouldBindJSON(&settings); err != nil {
 					c.JSON(400, gin.H{"message": err.Error()})
 					return
 				}
 				settings.UserID = userID // Ensure it stays linked to current user
-				
+
 				log.Printf("[User %d] Salvando configurações: HA_URL=%s", userID, settings.HaUrl)
-				
+
 				if err := db.Save(&settings).Error; err != nil {
 					c.JSON(500, gin.H{"message": "Erro ao salvar: " + err.Error()})
 					return
@@ -387,7 +475,7 @@ func main() {
 
 				var settings Settings
 				db.Where("user_id = ?", userID).First(&settings)
-				
+
 				session := TrackingSession{UserID: userID, StartTime: time.Now()}
 				db.Create(&session)
 

@@ -15,12 +15,19 @@ HA Device Tracker é um aplicativo full-stack que rastreia e exibe as localizaç
 ### Backend
 1. Navigate to the backend directory: `cd backend`
 2. Install dependencies: `npm install`
-3. Copy `.env.example` to `.env` and configure your settings:
+3. Configure environment variables using the example profiles:
 ```bash
-HA_URL=http://homeassistant.local:8123  # Your Home Assistant URL
-HA_TOKEN=your_long_lived_access_token   # Your Home Assistant Long-Lived Access Token
-HA_DEVICE_ID=device_tracker.my_device   # Entity ID of the device to track
+# common defaults
+.env.example
+
+# development profile
+.env.development.example
+
+# production profile
+.env.production.example
 ```
+4. Select the profile with `APP_ENV` (`development` by default).  
+   The backend loads `.env.example` plus `.env.<APP_ENV>.example`.
 
 ### Frontend
 1. Navigate to the frontend directory: `cd frontend`
@@ -91,6 +98,8 @@ You can configure the application by setting environment variables before runnin
 export HA_URL="http://your-ha-instance.local:8123"
 export HA_TOKEN="your_long_lived_access_token"
 export HA_DEVICE_ID="device_tracker.your_device"
+export APP_ENV="development"  # or "production"
+export ALLOW_REGISTRATION="false" # Only "true" enables new registrations
 
 # Set custom ports
 export PORT="3001"           # Backend server port
